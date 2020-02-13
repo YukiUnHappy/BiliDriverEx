@@ -1,6 +1,7 @@
 import sys
 import struct
 import math
+import secrets
 from PIL import Image
 from io import BytesIO
 
@@ -34,12 +35,30 @@ class Encoder:
 
     def encode_bmp(self, data):
         return Encoder.bmp_header(data) + data
-        
-        
+
     def decode_bmp(self, data):
         return data[62:]
-        
-    
+
+    @staticmethod
+    def png_header(data):
+        return b"\x89PNG\x0d\x0a\x1a\x0a" \
+            + b"\x00\x00\x00\x0d" \
+            + b"IHDR" \
+            + b"\x00\x00\x00\x01\x00\x00\x00\x01" \
+            + b"\x08\x06\x00\x00\x00" \
+            + b"\x1f\x15\xc4\x89" \
+            + b"\x00\x00\x00\x0a" \
+            + b"IDAT" \
+            + b"\x78\x9c\x63\x00\x01\x00\x00\x05\x00\x01" \
+            + b"\x0d\x0a\x2d\xb4" \
+            + b"\x00\x00\x00\xff\xff\xff\x00"
+
+    def encode_png2(self, data):
+        return Encoder.png_header(data) + data
+
+    def decode_png2(self, data):
+        return data[62:]
+
     def encode_png(self, data):
         minw = self.minw
         minh = self.minh
@@ -50,11 +69,11 @@ class Encoder:
         
         minsz = minw * minh * dep
         if len(data) < minsz:
-            data = data + b'\0' * (minsz - len(data))
+            data = data + secrets.token_bytes(minsz - len(data))
         
         rem = len(data) % (minw * dep)
         if rem != 0:
-            data = data + b'\0' * (minw * dep - rem)
+            data = data + secrets.token_bytes(minw * dep - rem)
         hei = len(data) // (minw * dep)
         
         img = Image.frombytes(mode, (minw, hei), data)

@@ -16,18 +16,22 @@ import threading
 import time
 import traceback
 import types
-from BiliDriveEx import __version__
-from BiliDriveEx.bilibili import Bilibili
-from BiliDriveEx.encoder import Encoder
+from TGDriveEx import __version__
+from TGDriveEx.encoder import Encoder
 
-log = Bilibili._log
 encoder = Encoder()
+# fix 'Image dimensions invalid'
+encoder.minw = 450
+encoder.minh = 450
 
 bundle_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
 
-default_url = lambda sha1: f"http://i0.hdslb.com/bfs/album/{sha1}.png"
-meta_string = lambda url: ("bdex://" + re.findall(r"[a-fA-F0-9]{40}", url)[0]) if re.match(r"^http(s?)://i0.hdslb.com/bfs/album/[a-fA-F0-9]{40}.png$", url) else url
+default_url = lambda hash: f"https://telegra.ph/file/{hash}.png"
+meta_string = lambda url: ("tgex://" + re.findall(r"[a-fA-F0-9]{21}", url)[0]) if re.match(r"^http(s?)://telegra.ph/file/[a-fA-F0-9]{21}.png$", url) else url
 size_string = lambda byte: f"{byte / 1024 / 1024 / 1024:.2f} GB" if byte > 1024 * 1024 * 1024 else f"{byte / 1024 / 1024:.2f} MB" if byte > 1024 * 1024 else f"{byte / 1024:.2f} KB" if byte > 1024 else f"{int(byte)} B"
+
+def log(message):
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}] {message}")
 
 def calc_sha1(data, hexdigest=False):
     sha1 = hashlib.sha1()
@@ -39,12 +43,8 @@ def calc_sha1(data, hexdigest=False):
     return sha1.hexdigest() if hexdigest else sha1.digest()
 
 def fetch_meta(s):
-    if re.match(r"^bdex://[a-fA-F0-9]{40}$", s):
-        full_meta = image_download(default_url(re.findall(r"[a-fA-F0-9]{40}", s)[0]))
-    elif re.match(r"^bdrive://[a-fA-F0-9]{40}$", s):
-        full_meta = image_download(
-            default_url(re.findall(r"[a-fA-F0-9]{40}", s)[0]).replace('png', 'x-ms-bmp')
-        )
+    if re.match(r"^tgex://[a-fA-F0-9]{21}$", s) or re.match(r"^[a-fA-F0-9]{21}$", s):
+        full_meta = image_download(default_url(re.findall(r"[a-fA-F0-9]{21}", s)[0]))
     elif s.startswith("http://") or s.startswith("https://"):
         full_meta = image_download(s)
     else:
@@ -55,29 +55,26 @@ def fetch_meta(s):
     except:
         return None
 
-def image_upload(data, cookies):
-    url = "https://api.vc.bilibili.com/api/v1/drawImage/upload"
+def image_upload(data):
+    url = "https://telegra.ph/upload"
     headers = {
-        'Origin': "https://t.bilibili.com",
-        'Referer': "https://t.bilibili.com/",
+        'Origin': "https://telegra.ph",
+        'Referer': "https://telegra.ph/",
         'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.79 Safari/537.36",
     }
     files = {
-        'file_up': (f"{int(time.time() * 1000)}.png", data),
-    }
-    data = {
-        'biz': "draw",
-        'category': "daily",
+        'file': ("blob", data, "image/png"),
     }
     try:
-        response = requests.post(url, data=data, headers=headers, cookies=cookies, files=files, timeout=300).json()
+        response = requests.post(url, headers=headers, files=files, timeout=300).json()
     except:
+        traceback.print_exc()
         response = None
     return response
 
 def image_download(url):
     headers = {
-        'Referer': "http://t.bilibili.com/",
+        'Referer': "https://telegra.ph/",
         'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.79 Safari/537.36",
     }
     content = []
@@ -111,20 +108,13 @@ def read_in_chunk(file_name, chunk_size=16 * 1024 * 1024, chunk_number=-1):
             else:
                 return
 
-def login_handle(args):
-    bilibili = Bilibili()
-    if bilibili.login(username=args.username, password=args.password):
-        bilibili.get_user_info()
-        with open(os.path.join(bundle_dir, "cookies.json"), "w", encoding="utf-8") as f:
-            f.write(json.dumps(bilibili.get_cookies(), ensure_ascii=False, indent=2))
-
 def upload_handle(args):
     def core(index, block):
         try:
             block_sha1 = calc_sha1(block, hexdigest=True)
             full_block = encoder.encode(block)
             full_block_sha1 = calc_sha1(full_block, hexdigest=True)
-            url = is_skippable(full_block_sha1)
+            url = None
             if url:
                 log(f"分块{index + 1}/{block_num}上传完毕")
                 block_dict[index] = {
@@ -137,21 +127,21 @@ def upload_handle(args):
                 for _ in range(10):
                     if terminate_flag.is_set():
                         return
-                    response = image_upload(full_block, cookies)
-                    if response:
-                        if response['code'] == 0:
-                            url = response['data']['image_url']
-                            log(f"分块{index + 1}/{block_num}上传完毕")
-                            block_dict[index] = {
-                                'url': url,
-                                'size': len(block),
-                                'sha1': block_sha1,
-                            }
-                            return
-                        elif response['code'] == -4:
-                            terminate_flag.set()
-                            log(f"分块{index + 1}/{block_num}第{_ + 1}次上传失败, 请重新登录")
-                            return
+                    response = image_upload(full_block)
+                    if response and type(response) == list and len(response) == 1:
+                        url = "https://telegra.ph" + response[0]['src']
+                        log(f"分块{index + 1}/{block_num}上传完毕")
+                        block_dict[index] = {
+                            'url': url,
+                            'size': len(block),
+                            'sha1': block_sha1,
+                        }
+                        return
+                    elif response:
+                        terminate_flag.set()
+                        log(f"分块{index + 1}/{block_num}第{_ + 1}次上传失败, 请重新上传")
+                        log(response)
+                        return
                     log(f"分块{index + 1}/{block_num}第{_ + 1}次上传失败")
                 else:
                     terminate_flag.set()
@@ -160,20 +150,6 @@ def upload_handle(args):
             traceback.print_exc()
         finally:
             done_flag.release()
-
-    def is_skippable(sha1):
-        url = default_url(sha1)
-        headers = {
-            'Referer': "http://t.bilibili.com/",
-            'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.79 Safari/537.36",
-        }
-        for _ in range(5):
-            try:
-                response = requests.head(url, headers=headers, timeout=10)
-                return url if response.status_code == 200 else None
-            except:
-                pass
-        return None
 
     def write_history(first_4mb_sha1, meta_dict, url):
         history = read_history()
@@ -198,12 +174,6 @@ def upload_handle(args):
         log(f"文件已于{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(history[first_4mb_sha1]['time']))}上传, 共有{len(history[first_4mb_sha1]['block'])}个分块")
         log(f"META URL -> {meta_string(url)}")
         return url
-    try:
-        with open(os.path.join(bundle_dir, "cookies.json"), "r", encoding="utf-8") as f:
-            cookies = json.loads(f.read())
-    except:
-        log("Cookies加载失败, 请先登录")
-        return None
     log(f"线程数: {args.thread}")
     done_flag = threading.Semaphore(0)
     terminate_flag = threading.Event()
@@ -234,14 +204,16 @@ def upload_handle(args):
     meta = json.dumps(meta_dict, ensure_ascii=False).encode("utf-8")
     full_meta = encoder.encode(meta)
     for _ in range(10):
-        response = image_upload(full_meta, cookies)
-        if response and response['code'] == 0:
-            url = response['data']['image_url']
+        response = image_upload(full_meta)
+        if response and type(response) == list and len(response) == 1:
+            url = "https://telegra.ph" + response[0]['src']
             log("元数据上传完毕")
             log(f"{meta_dict['filename']} ({size_string(meta_dict['size'])}) 上传完毕, 用时{time.time() - start_time:.1f}秒, 平均速度{size_string(meta_dict['size'] / (time.time() - start_time))}/s")
             log(f"META URL -> {meta_string(url)}")
             write_history(first_4mb_sha1, meta_dict, url)
             return url
+        elif response:
+            log(response)
         log(f"元数据第{_ + 1}次上传失败")
     else:
         return None
@@ -366,13 +338,9 @@ def history_handle(args):
 
 def main():
     signal.signal(signal.SIGINT, lambda signum, frame: os.kill(os.getpid(), 9))
-    parser = argparse.ArgumentParser(prog="BiliDriveEx", description="Make Bilibili A Great Cloud Storage!", formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("-v", "--version", action="version", version=f"BiliDriveEx version: {__version__}")
+    parser = argparse.ArgumentParser(prog="TGDriveEx", description="Make Telegraph A Great Cloud Storage!", formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("-v", "--version", action="version", version=f"TGDriveEx version: {__version__}")
     subparsers = parser.add_subparsers()
-    login_parser = subparsers.add_parser("login", help="log in to bilibili")
-    login_parser.add_argument("username", help="your bilibili username")
-    login_parser.add_argument("password", help="your bilibili password")
-    login_parser.set_defaults(func=login_handle)
     upload_parser = subparsers.add_parser("upload", help="upload a file")
     upload_parser.add_argument("file", help="name of the file to upload")
     upload_parser.add_argument("-b", "--block-size", default=4, type=int, help="block size in MB")
@@ -392,7 +360,7 @@ def main():
     shell = False
     while True:
         if shell:
-            args = shlex.split(input("BiliDriveEx > "))
+            args = shlex.split(input("TGDriveEx > "))
             try:
                 args = parser.parse_args(args)
                 args.func(args)
