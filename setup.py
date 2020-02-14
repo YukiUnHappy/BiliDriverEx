@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import setuptools
-import TGDriveEx
+import AliDriveEx
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
@@ -11,11 +11,11 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
     install_requires = fh.read().splitlines()
 
 setuptools.setup(
-    name="TGDriveEx",
-    version=TGDriveEx.__version__,
+    name="AliDriveEx",
+    version=AliDriveEx.__version__,
     url="https://github.com/apachecn/BiliDriveEx",
-    author=TGDriveEx.__author__,
-    author_email=TGDriveEx.__email__,
+    author=AliDriveEx.__author__,
+    author_email=AliDriveEx.__email__,
     classifiers=[
         "Development Status :: 4 - Beta",
         "Environment :: Console",
@@ -53,8 +53,8 @@ setuptools.setup(
     python_requires=">=3.6",
     entry_points={
         'console_scripts': [
-            "TGDriveEx=TGDriveEx.__main__:main",
-            "tgex=TGDriveEx.__main__:main",
+            "AliDriveEx=AliDriveEx.__main__:main",
+            "aliex=AliDriveEx.__main__:main",
         ],
     },
     packages=setuptools.find_packages(),
